@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Pose Avatar
 
 A Python project that drives a 3D humanoid avatar using webcam-based pose estimation with MediaPipe and visualizes it in real-time using the Ursina 3D engine.
@@ -252,7 +251,3 @@ For issues, questions, or suggestions, please submit an issue on the project rep
 ---
 
 **Enjoy creating your digital twin!** 🦾
-=======
-# Pose-avatar
-A Python project that drives a 3D humanoid avatar using webcam-based pose estimation with MediaPipe and visualizes it in real-time using the Ursina 3D engine.
->>>>>>> fc1852787a8d25a3ebb13b40b43b82a134cf56d9
