@@ -1,0 +1,7 @@
+# Pin MediaPipe 0.10.x so mp.solutions.pose is available (removed in 1.x).
+# opencv-contrib-python provides cv2 (imshow + MediaPipe's extra modules).
+mediapipe>=0.10.14,<0.11
+opencv-contrib-python>=4.8.0,<5
+numpy>=1.24.0
+# Ursina 7.x is the 3D engine used by pose_avatar.py (Panda3D based).
+ursina>=7.0.0,<8
