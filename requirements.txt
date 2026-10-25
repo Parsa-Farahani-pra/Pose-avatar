@@ -1,6 +1,10 @@
-# Pin MediaPipe 0.10.x so mp.solutions.pose is available (removed in 1.x).
+# Pin MediaPipe 0.10.14 exactly: mp.solutions (mp.solutions.pose etc.) was
+# available in 0.10.14 but removed in later 0.10.x patches (0.10.20+) and in
+# 1.x.  Using a range like >=0.10.14,<0.11 lets pip pick 0.10.35 which lacks
+# the solutions subpackage entirely, so we pin to the last working version.
+# NOTE: requires Python 3.8-3.13 (no solutions wheel exists for 3.14).
+mediapipe==0.10.14
 # opencv-contrib-python provides cv2 (imshow + MediaPipe's extra modules).
-mediapipe>=0.10.14,<0.11
 opencv-contrib-python>=4.8.0,<5
 numpy>=1.24.0
 # Ursina 7.x is the 3D engine used by pose_avatar.py (Panda3D based).

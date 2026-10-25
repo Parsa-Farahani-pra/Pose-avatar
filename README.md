@@ -2,8 +2,8 @@
 
 A Python project that drives a 3D humanoid avatar using webcam-based pose estimation with MediaPipe and visualizes it in real-time using the Ursina 3D engine.
 
-![python](https://img.shields.io/badge/python-3.8%2B-blue)
-![mediapipe](https://img.shields.io/badge/mediapipe-0.10.x-orange)
+![python](https://img.shields.io/badge/python-3.8--3.13-blue)
+![mediapipe](https://img.shields.io/badge/mediapipe-0.10.14-orange)
 ![ursina](https://img.shields.io/badge/ursina-7.x-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -30,9 +30,9 @@ A Python project that drives a 3D humanoid avatar using webcam-based pose estima
 ### Dependencies
 | Component | Required Version | Purpose |
 |-----------|-----------------|---------|
-| **Python** | 3.8 - 3.12 | Core runtime |
+| **Python** | 3.8 - 3.13 | Core runtime (3.14 not supported by MediaPipe) |
 | **OpenCV** | 4.8.0+ / 5.x | Camera capture and image processing |
-| **MediaPipe** | 0.10.14 - 0.10.22 | Pose landmark detection |
+| **MediaPipe** | 0.10.14 (exact) | Pose landmark detection (`mp.solutions`) |
 | **Ursina** | 7.0.0 - 7.x | 3D rendering engine |
 | **NumPy** | 1.24.0+ | Numerical operations |
 
@@ -73,11 +73,15 @@ A Python project that drives a 3D humanoid avatar using webcam-based pose estima
 
 ### Step 1: Install Dependencies
 
+> **⚠️ Python 3.14 is not supported.** MediaPipe's `mp.solutions.pose` API (used by
+> this project) is only available in MediaPipe 0.10.14, which has no wheel for
+> Python 3.14. Use **Python 3.8–3.13** instead.
+
 Create a virtual environment and install required packages:
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
+# Create virtual environment (Python 3.12 recommended)
+python3.12 -m venv .venv
 
 # Activate virtual environment
 # On Linux/macOS:
@@ -85,11 +89,13 @@ source .venv/bin/activate
 # On Windows:
 .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install pinned, reproducible dependencies
+pip install -r requirements-lock.txt
 ```
 
-**Note**: The project uses `mediapipe>=0.10.14,<0.11` which includes the `mp.solutions.pose` API that was removed in mediapipe 1.x. It also requires `ursina>=7.0.0,<8` for the 3D rendering engine.
+**Note**: MediaPipe is pinned to exactly `0.10.14` — this is the last version that
+includes the `mp.solutions` submodule (removed in later 0.10.x patches and in 1.x).
+Ursina 7.x provides the 3D rendering engine.
 
 ## 📖 Usage
 
@@ -189,7 +195,8 @@ Run with `--min-visibility` set to 0 to see all landmarks:
 ├── pose_avatar.py          # Main 3D avatar program
 ├── pose_webcam.py          # Standalone 2D pose tracker
 ├── run.sh                  # Execution helper script
-├── requirements.txt        # Python dependencies
+├── requirements.txt        # Python dependency ranges
+├── requirements-lock.txt   # Reproducible pinned versions
 ├── .gitignore              # Git ignore rules
 ├── README.md               # This file
 └── README.old              # Original documentation
@@ -219,7 +226,14 @@ This project is for educational and personal use. Please respect the licenses of
 - **Solution**: Ensure you've activated the virtual environment and installed dependencies:
 ```bash
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
+pip install -r requirements-lock.txt
+```
+
+### `AttributeError: module 'mediapipe' has no attribute 'solutions'`
+- **Cause**: You are using Python 3.14, or an incompatible mediapipe version. MediaPipe's `mp.solutions.pose` API is only available in version 0.10.14 and was removed in later 0.10.x patches (0.10.20+) and all 1.x versions.
+- **Solution**: Recreate the venv with Python 3.8–3.13 and install the locked dependencies:
+```bash
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt
 ```
 
 ### Avatar appears oversized/undersized

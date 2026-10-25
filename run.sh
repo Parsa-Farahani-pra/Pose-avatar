@@ -6,11 +6,16 @@ cd "$HERE"
 
 PY=""
 for CAND in "$HERE/.venv/bin/python" "$HERE/venv/bin/python" "$(command -v python3 || true)"; do
-    if [[ -x "$CAND" ]] && "$CAND" -c "import cv2, mediapipe" 2>/dev/null; then
+    if [[ -x "$CAND" ]] && "$CAND" -c "import cv2, mediapipe; mediapipe.solutions.pose" 2>/dev/null; then
         PY="$CAND"; break
     fi
 done
-[[ -z "$PY" ]] && { echo "No working venv found." >&2; exit 1; }
+if [[ -z "$PY" ]]; then
+    echo "No working venv found." >&2
+    echo "MediaPipe (mp.solutions.pose) is required. Recreate the venv:" >&2
+    echo "  python3.12 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt" >&2
+    exit 1
+fi
 
 # Default script is pose_avatar.py.  A leading "-" means the user passed a
 # flag only (e.g. "./run.sh --help"), so the default script is used.
