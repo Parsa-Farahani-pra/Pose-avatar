@@ -42,6 +42,12 @@ from ursina import (
     held_keys, time as ursina_time,
 )
 
+from hand_tracker import (
+    HandTracker, HandLandmarks, FINGER_CHAINS, WRIST,
+    THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP,
+    draw_hand_on_frame
+)
+
 # ---------------------------------------------------------------------------
 # MediaPipe pose landmark indices
 # ---------------------------------------------------------------------------
@@ -118,6 +124,151 @@ COLOR_PANTS = color.rgb32(58, 68, 94)
 COLOR_SHOE = color.rgb32(38, 38, 48)
 COLOR_JOINT = color.azure
 
+# Hand colors
+COLOR_HAND_LEFT = color.rgb32(120, 200, 220)   # Teal for left hand
+COLOR_HAND_RIGHT = color.rgb32(230, 130, 200)  # Pink for right hand
+
+# Hand landmark indices (matching hand_tracker.py)
+WRIST = 0
+THUMB_CMC, THUMB_MCP, THUMB_IP, THUMB_TIP = 1, 2, 3, 4
+INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP = 5, 6, 7, 8
+MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP = 9, 10, 11, 12
+RING_MCP, RING_PIP, RING_DIP, RING_TIP = 13, 14, 15, 16
+PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP = 17, 18, 19, 20
+
+# Finger hierarchies for articulated bones
+FINGER_CHAINS = {
+    "thumb": [THUMB_CMC, THUMB_MCP, THUMB_IP, THUMB_TIP],
+    "index": [INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP],
+    "middle": [MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP],
+    "ring": [RING_MCP, RING_PIP, RING_DIP, RING_TIP],
+    "pinky": [PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP],
+}
+
+# Hand avatar proportions (metres)
+PALM_RADIUS = 0.030    # Palm radius (3cm) - smaller than forearm (0.045)
+PHALANX_RADIUS = 0.006    # Much thinner for slender fingers
+PALM_LENGTH = 0.08
+PHALANX_1_LENGTH = 0.07   # MCP to PIP
+PHALANX_2_LENGTH = 0.05   # PIP to DIP
+PHALANX_3_LENGTH = 0.04   # DIP to TIP
+PALM_THICKNESS = 0.030    # Palm thickness (flat hand)
+
+# ---------------------------------------------------------------------------
+# Articulated hand primitives
+# ---------------------------------------------------------------------------
+class ArticulatedHand:
+    """A fully articulated hand attached to a wrist landmark.
+
+    Simple, symmetrical design: palm is a Capsule between WRIST and
+    MIDDLE_MCP (middle finger base). Identical shape for left/right hands.
+
+    NOTE: like every other rig part, capsules are driven with ABSOLUTE scene
+    coordinates (which already include avatar_offset).  The hand root is
+    therefore never translated - translating it AND passing absolute points
+    would apply the wrist offset twice and fling parts across the scene.
+    """
+
+    def __init__(self, wrist_idx: int, is_left: bool, parent=None):
+        self.wrist_idx = wrist_idx
+        self.is_left = is_left
+        self.color = COLOR_HAND_LEFT if is_left else COLOR_HAND_RIGHT
+        self.root = Entity(parent=parent)
+        # Palm: capsule from wrist (0) to middle MCP (9)
+        self.palm = Capsule(WRIST, MIDDLE_MCP, PALM_RADIUS, self.color, self.root)
+        self.finger_bones: dict[str, list[Capsule]] = {}
+        self._build()
+
+    def _build(self) -> None:
+        for finger_name, chain in FINGER_CHAINS.items():
+            # Each finger is a chain of phalanx capsules (thumb: 3 segments,
+            # other fingers: 3 segments) driven by consecutive landmarks.
+            bones = []
+            for i in range(len(chain) - 1):
+                bones.append(Capsule(chain[i], chain[i + 1], PHALANX_RADIUS,
+                                     self.color, self.root))
+            self.finger_bones[finger_name] = bones
+
+    def set(self, hand_pts: dict[int, Vec3]) -> None:
+        """Update hand parts from interpolated hand landmark positions."""
+        wrist_pos = hand_pts.get(self.wrist_idx)
+        if wrist_pos is None:
+            self.root.enabled = False
+            return
+
+        self.root.enabled = True
+        # No position translation here: scene coordinates already contain
+        # avatar_offset, exactly like the body capsules.
+
+        self.palm.set(hand_pts)
+        for finger_name, bones in self.finger_bones.items():
+            for bone in bones:
+                bone.set(hand_pts)
+
+    def hide(self) -> None:
+        self.root.enabled = False
+
+
+# ---------------------------------------------------------------------------
+# Hand landmark to avatar coordinate converter
+# ---------------------------------------------------------------------------
+class HandAvatarTracker:
+    """Converts MediaPipe hand landmarks to avatar scene coordinates."""
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+
+    def convert(self, hand_lms: HandLandmarks, pose_pts: dict[int, Vec3], avatar_offset: Vec3) -> dict[int, Vec3]:
+        """Convert hand landmarks from MediaPipe world space to avatar scene space.
+
+        Args:
+            hand_lms: HandLandmarks from hand_tracker (21 landmarks in world space)
+            pose_pts: Current pose landmarks in avatar scene coordinates (from PoseTracker)
+            avatar_offset: Current avatar root offset
+
+        Returns:
+            Dict mapping hand landmark indices (0-20) to Vec3 in avatar scene coords
+        """
+        # Get wrist position from pose tracker (already in avatar scene coords)
+        # We'll use this as the anchor point
+        # For left hand: use L_WRIST, for right hand: use R_WRIST
+        wrist_idx = L_WRIST if hand_lms.handedness == "Left" else R_WRIST
+        wrist_scene = pose_pts.get(wrist_idx)
+
+        if wrist_scene is None:
+            return {}
+
+        # Get hand landmarks in MediaPipe world space
+        mp_hand_pts = hand_lms.landmarks_3d
+
+        # Get MediaPipe wrist position (world space)
+        mp_wrist = mp_hand_pts.get(WRIST)
+        if mp_wrist is None:
+            return {}
+
+        # Scale factor: compare palm size in MP vs avatar reference
+        # We'll use a simple approach: use the same body scale as the pose tracker
+        # The hand landmarks are already in metric world space
+
+        # Convert each hand landmark to avatar scene coords
+        # Strategy: compute relative positions from MP wrist, then apply to avatar wrist
+        out = {}
+        body_scale = self.cfg.scale  # Should match PoseTracker's effective scale
+
+        for idx, mp_pos in mp_hand_pts.items():
+            mp_vec = Vec3(mp_pos[0], mp_pos[1], mp_pos[2])
+            # Relative to MP wrist
+            rel = mp_vec - Vec3(mp_wrist[0], mp_wrist[1], mp_wrist[2])
+            # Apply to avatar wrist position
+            # Note: MediaPipe world has +Z toward camera, avatar scene has -Z toward camera
+            out[idx] = Vec3(
+                wrist_scene.x + rel.x * body_scale,
+                wrist_scene.y - rel.y * body_scale,
+                wrist_scene.z - rel.z * body_scale,
+            )
+
+        return out
+
 # ---------------------------------------------------------------------------
 # cv2 overlay colors (BGR) for the optional --show-video window
 # ---------------------------------------------------------------------------
@@ -187,6 +338,7 @@ class Config:
 
     # Window placement (so the 3D scene and the cv2 preview sit next to each
     # other on a wide desktop instead of on top of each other).
+    enable_hands: bool = True
     window_width: int = 1280
     window_height: int = 720
     window_x: int = 0
@@ -205,6 +357,7 @@ class PoseSample:
     t: float                                   # monotonic timestamp
     points: dict[int, Vec3] = field(default_factory=dict)   # raw world landmarks
     vis: dict[int, float] = field(default_factory=dict)      # raw visibility
+    hands: dict[str, HandLandmarks] = field(default_factory=dict)  # "Left" and "Right"
     image: list[tuple[float, float, float]] = field(default_factory=list)
     frame: object | None = None
 
@@ -261,6 +414,9 @@ class PoseWorker(threading.Thread):
             min_tracking_confidence=0.5,
         )
 
+        # Initialize hand tracker if enabled
+        hand_tracker = HandTracker() if self.cfg.enable_hands else None
+
         fps_window_start = time.monotonic()
         fps_window_frames = 0
         try:
@@ -291,6 +447,13 @@ class PoseWorker(threading.Thread):
                     for lm in image.landmark:
                         sample.image.append((lm.x, lm.y,
                                              float(getattr(lm, "visibility", 0.0))))
+
+                # Process hands if enabled
+                if hand_tracker is not None:
+                    hands_dict = hand_tracker.process_frame(rgb, sample.t)
+                    for label, hand_lms in hands_dict.items():
+                        sample.hands[label] = hand_lms
+
                 if self.cfg.show_video:
                     sample.frame = frame
 
@@ -306,6 +469,8 @@ class PoseWorker(threading.Thread):
                     fps_window_frames = 0
                     fps_window_start = now
         finally:
+            if hand_tracker is not None:
+                hand_tracker.close()
             pose.close()
             cap.release()
 
@@ -634,6 +799,7 @@ class Avatar:
         self.root = Entity()
         self.parts: list = []
         self.joint_entities: dict[int, Entity] = {}
+        self.hands: dict[str, ArticulatedHand] = {}
 
         # torso -------------------------------------------------------------
         self.parts.append(Box(P_MID_SHOULDER, P_MID_HIP,
@@ -654,7 +820,8 @@ class Avatar:
                                       COLOR_SHIRT, self.root))
             self.parts.append(Capsule(elbow, wrist, FOREARM_RADIUS,
                                       COLOR_SKIN, self.root))
-            self.parts.append(Sphere(wrist, HAND_RADIUS, COLOR_SKIN, self.root))
+            # Replace simple sphere hand with ArticulatedHand
+            # We'll add these as special parts tracked separately
 
         # legs --------------------------------------------------------------
         for hip, knee, ankle, foot in (
@@ -666,6 +833,10 @@ class Avatar:
             self.parts.append(Box(ankle, foot, (FOOT_DEPTH, FOOT_WIDTH),
                                   COLOR_SHOE, self.root))
 
+        # articulated hands -------------------------------------------------
+        self.hands["Left"] = ArticulatedHand(L_WRIST, is_left=True, parent=self.root)
+        self.hands["Right"] = ArticulatedHand(R_WRIST, is_left=False, parent=self.root)
+
         # optional debug joint markers --------------------------------------
         if cfg.show_joints:
             for idx in (NOSE, L_EAR, R_EAR, L_SHOULDER, R_SHOULDER, L_ELBOW,
@@ -674,7 +845,7 @@ class Avatar:
                 self.joint_entities[idx] = Entity(
                     parent=self.root, model="sphere", scale=0.05, color=COLOR_JOINT)
 
-    def set(self, pts: dict[int, Vec3]) -> None:
+    def set(self, pts: dict[int, Vec3], hand_pts: dict[str, dict[int, Vec3]] | None = None) -> None:
         for part in self.parts:
             part.set(pts)
         for idx, ent in self.joint_entities.items():
@@ -685,6 +856,14 @@ class Avatar:
                 ent.enabled = True
                 ent.position = p
 
+        # Update articulated hands
+        if hand_pts:
+            for label, hand in self.hands.items():
+                if label in hand_pts:
+                    hand.set(hand_pts[label])
+                else:
+                    hand.hide()
+
     def hide(self) -> None:
         for part in self.parts:
             if hasattr(part, "pivot"):
@@ -693,6 +872,8 @@ class Avatar:
                 part.entity.enabled = False
         for ent in self.joint_entities.values():
             ent.enabled = False
+        for hand in self.hands.values():
+            hand.hide()
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +1016,7 @@ avatar: Avatar | None = None
 hud: Hud | None = None
 avatar_offset = Vec3(0.0, HIP_HEIGHT, 0.0)
 shadow: Entity | None = None
+hand_avatar_tracker: HandAvatarTracker | None = None
 start_time = time.monotonic()
 _full_body_seen = False
 _preview_frame = None
@@ -861,7 +1043,7 @@ def _place_preview_window() -> None:
 # Per-frame hook
 # ---------------------------------------------------------------------------
 def update() -> None:
-    global _full_body_seen, _preview_frame, avatar_offset, _preview_placed
+    global _full_body_seen, _preview_frame, avatar_offset, _preview_placed, hand_avatar_tracker
 
     if worker is None or avatar is None or hud is None:
         return
@@ -904,8 +1086,14 @@ def update() -> None:
     if cfg.require_full_body and not _full_body_seen:
         ready = False
 
+    # --- process hand landmarks ------------------------------------------
+    hand_pts: dict[str, dict[int, Vec3]] = {}
+    if pts and ready and hand_avatar_tracker is not None and sample is not None:
+        for label, hand_lms in sample.hands.items():
+            hand_pts[label] = hand_avatar_tracker.convert(hand_lms, pts, avatar_offset)
+
     if pts and ready:
-        avatar.set(pts)
+        avatar.set(pts, hand_pts)
     else:
         avatar.hide()
 
@@ -945,6 +1133,10 @@ def update() -> None:
     if cfg.show_video:
         if sample is not None and sample.frame is not None:
             draw_pose_on_frame(sample.frame, sample.image, cfg.min_visibility)
+            # Draw hands on preview
+            if cfg.enable_hands:
+                for label, hand_lms in sample.hands.items():
+                    draw_hand_on_frame(sample.frame, hand_lms)
             _preview_frame = sample.frame
         if _preview_frame is not None:
             if not _preview_placed:
@@ -1017,6 +1209,8 @@ def parse_args() -> argparse.Namespace:
                         "(default: 0.25).")
     p.add_argument("--show-video", action="store_true",
                    help="Also open a cv2 window with the camera feed + overlay.")
+    p.add_argument("--enable-hands", action="store_true",
+                   help="Enable hand and finger tracking.")
     p.add_argument("--no-flip", action="store_true",
                    help="Do not mirror the frame (selfie view is on by default).")
     p.add_argument("--show-joints", action="store_true",
@@ -1057,7 +1251,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    global cfg, worker, tracker, avatar, hud, shadow, avatar_offset
+    global cfg, worker, tracker, avatar, hud, shadow, avatar_offset, hand_avatar_tracker
 
     args = parse_args()
     cfg = Config(
@@ -1067,6 +1261,7 @@ def main() -> None:
         model_complexity=args.model_complexity,
         min_visibility=args.min_visibility,
         show_video=args.show_video,
+        enable_hands=args.enable_hands,
         flip=not args.no_flip,
         show_joints=args.show_joints,
         require_full_body=args.require_full_body,
@@ -1092,6 +1287,7 @@ def main() -> None:
     hud = Hud()
     shadow = Entity(model="circle", scale=0.7, color=color.rgb32(10, 10, 16),
                     position=(0, GROUND_Y + 0.02, 0))
+    hand_avatar_tracker = HandAvatarTracker(cfg)
     avatar_offset = Vec3(0.0, cfg.hip_height, 0.0)
 
     worker = PoseWorker(cfg)

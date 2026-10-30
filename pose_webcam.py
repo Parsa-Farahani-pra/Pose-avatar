@@ -10,6 +10,8 @@ import time
 import cv2
 import mediapipe as mp
 
+from hand_tracker import HandTracker, draw_hand_on_frame
+
 LANDMARK_COLOR = (0, 255, 0)
 BONE_COLOR = (0, 200, 255)
 FPS_COLOR = (255, 255, 255)
@@ -50,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=480,
         help="Requested capture height (default: 480).",
+    )
+    parser.add_argument(
+        "--enable-hands",
+        action="store_true",
+        help="Enable simultaneous hand and finger tracking.",
     )
     return parser.parse_args()
 
@@ -126,6 +133,8 @@ def main() -> None:
         min_tracking_confidence=0.5,
     )
 
+    hand_tracker = HandTracker() if args.enable_hands else None
+
     prev_time = time.perf_counter()
     window_name = "Pose (q or Esc to quit)"
 
@@ -151,6 +160,11 @@ def main() -> None:
                     args.min_visibility,
                 )
 
+            if hand_tracker is not None:
+                hands_dict = hand_tracker.process_frame(rgb)
+                for label, hand_lms in hands_dict.items():
+                    draw_hand_on_frame(frame, hand_lms)
+
             now = time.perf_counter()
             elapsed = now - prev_time
             prev_time = now
@@ -171,6 +185,8 @@ def main() -> None:
             if key in (ord("q"), 27):
                 break
     finally:
+        if hand_tracker is not None:
+            hand_tracker.close()
         pose.close()
         cap.release()
         cv2.destroyAllWindows()
