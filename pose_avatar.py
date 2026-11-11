@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from ursina import (
     Ursina, Entity, Vec3, color, camera, window, Text, application,
     held_keys, time as ursina_time,
@@ -47,6 +48,14 @@ from hand_tracker import (
     THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP,
     draw_hand_on_frame
 )
+from face_tracker import (
+    FaceWorker, FaceWorkerConfig, FaceLandmarks, POSE_FACE_LANDMARKS,
+    NOSE_TIP, FACE_MESH_JAWLINE, FACE_MESH_LEFT_EYEBROW,
+    FACE_MESH_RIGHT_EYEBROW, FACE_MESH_LEFT_EYE, FACE_MESH_RIGHT_EYE,
+    FACE_MESH_MOUTH, ALL_FACE_MESH_REGIONS,
+    draw_face_mesh_subset, debug_face_bounds_display
+)
+from emotion_detection import EmotionDetector, EmotionResult
 
 # ---------------------------------------------------------------------------
 # MediaPipe pose landmark indices
@@ -269,6 +278,7 @@ class HandAvatarTracker:
 
         return out
 
+
 # ---------------------------------------------------------------------------
 # cv2 overlay colors (BGR) for the optional --show-video window
 # ---------------------------------------------------------------------------
@@ -335,10 +345,12 @@ class Config:
     extrapolate: float = 0.15    # how far past the newest sample we may predict
     move_speed: float = MOVE_SPEED
     hip_height: float = HIP_HEIGHT
+    detect_emotion: bool = False
 
     # Window placement (so the 3D scene and the cv2 preview sit next to each
     # other on a wide desktop instead of on top of each other).
     enable_hands: bool = True
+    enable_face: bool = False
     window_width: int = 1280
     window_height: int = 720
     window_x: int = 0
@@ -358,6 +370,7 @@ class PoseSample:
     points: dict[int, Vec3] = field(default_factory=dict)   # raw world landmarks
     vis: dict[int, float] = field(default_factory=dict)      # raw visibility
     hands: dict[str, HandLandmarks] = field(default_factory=dict)  # "Left" and "Right"
+    face: FaceLandmarks | None = None  # Full FaceLandmarks with 468 points, bbox, etc.
     image: list[tuple[float, float, float]] = field(default_factory=list)
     frame: object | None = None
 
@@ -416,6 +429,7 @@ class PoseWorker(threading.Thread):
 
         # Initialize hand tracker if enabled
         hand_tracker = HandTracker() if self.cfg.enable_hands else None
+        face_tracker = FaceWorker(FaceWorkerConfig(enable_face=True, face_size_threshold=0.25)) if self.cfg.enable_face else None
 
         fps_window_start = time.monotonic()
         fps_window_frames = 0
@@ -454,6 +468,13 @@ class PoseWorker(threading.Thread):
                     for label, hand_lms in hands_dict.items():
                         sample.hands[label] = hand_lms
 
+                # Process face mesh if enabled
+                if face_tracker is not None:
+                    face_landmarks = face_tracker.process_frame(frame)
+                    if face_landmarks is not None and face_landmarks.is_detected:
+                        # Store full FaceLandmarks for both preview and avatar tracking
+                        sample.face = face_landmarks
+
                 if self.cfg.show_video:
                     sample.frame = frame
 
@@ -471,6 +492,8 @@ class PoseWorker(threading.Thread):
         finally:
             if hand_tracker is not None:
                 hand_tracker.close()
+            if face_tracker is not None:
+                face_tracker.close()
             pose.close()
             cap.release()
 
@@ -800,6 +823,7 @@ class Avatar:
         self.parts: list = []
         self.joint_entities: dict[int, Entity] = {}
         self.hands: dict[str, ArticulatedHand] = {}
+        self.face_anchor = None
 
         # torso -------------------------------------------------------------
         self.parts.append(Box(P_MID_SHOULDER, P_MID_HIP,
@@ -964,6 +988,121 @@ def _ui_pos(nx: float, ny: float) -> Vec3:
     return Vec3(nx * 0.5 * window.aspect_ratio, ny * 0.5, 0)
 
 
+# ============================================================================
+# Emotion HUD - shows emotion probabilities as horizontal bars
+# ============================================================================
+EMOTIONS = ["Happy", "Sad", "Angry", "Surprised", "Neutral"]
+EMOTION_COLORS = {
+    "Happy": color.rgb32(80, 200, 120),
+    "Sad": color.rgb32(100, 150, 255),
+    "Angry": color.rgb32(255, 80, 80),
+    "Surprised": color.rgb32(255, 200, 60),
+    "Neutral": color.rgb32(180, 180, 180),
+}
+
+
+class EmotionHUD:
+    """Bottom-left HUD showing emotion probabilities as horizontal bars."""
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.title = Text(text="EMOTION", scale=1.2, color=color.white, enabled=False)
+        self.bars: dict[str, Entity] = {}
+        self.bar_bgs: dict[str, Entity] = {}
+        self.labels: dict[str, Text] = {}
+        self.values: dict[str, Text] = {}
+        self.face_too_small = Text(text="Face too small (<25% frame)", scale=1.0, color=color.orange, enabled=False)
+        self.no_face = Text(text="No face detected", scale=1.0, color=color.gray, enabled=False)
+        self._aspect = None
+        self._layout_done = False
+
+    def _ensure_layout(self) -> None:
+        if self._layout_done:
+            return
+        self._layout_done = True
+        aspect = window.aspect_ratio
+        # Position at bottom-left, above the stats/hint area
+        base_y = -0.30  # starts at -0.30 and goes up
+        self.title.position = _ui_pos(-0.92, base_y)
+        self.face_too_small.position = _ui_pos(-0.92, base_y - 0.06)
+        self.no_face.position = _ui_pos(-0.92, base_y - 0.06)
+        for i, emo in enumerate(EMOTIONS):
+            y = base_y - 0.06 - i * 0.07  # -0.36, -0.43, -0.50, -0.57, -0.64
+            # Label
+            self.labels[emo] = Text(text=emo[:3].upper(), scale=0.75,
+                                    color=EMOTION_COLORS[emo], enabled=False)
+            self.labels[emo].position = _ui_pos(-0.92, y)
+            # Background bar
+            self.bar_bgs[emo] = Entity(parent=camera.ui, model="quad",
+                                        scale=(0.18, 0.035),
+                                        color=color.rgb32(40, 44, 58), enabled=False)
+            self.bar_bgs[emo].position = _ui_pos(-0.83, y - 0.005)
+            # Fill bar
+            self.bars[emo] = Entity(parent=camera.ui, model="quad",
+                                          scale=(0.001, 0.03),
+                                          color=EMOTION_COLORS[emo], enabled=False)
+            self.bars[emo].position = _ui_pos(-0.83, y - 0.005)
+            # Percentage value
+            self.values[emo] = Text(text="0%", scale=0.7, color=color.light_gray, enabled=False)
+            self.values[emo].position = _ui_pos(-0.62, y)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self.title.enabled = enabled
+        self.face_too_small.enabled = False
+        self.no_face.enabled = False
+        # Ensure layout is initialized first (lazy load)
+        self._ensure_layout()
+        for emo in EMOTIONS:
+            if emo in self.labels:
+                self.labels[emo].enabled = enabled
+            if emo in self.bar_bgs:
+                self.bar_bgs[emo].enabled = enabled
+            if emo in self.bars:
+                self.bars[emo].enabled = enabled
+            if emo in self.values:
+                self.values[emo].enabled = enabled
+
+    def show_face_too_small(self) -> None:
+        self.set_enabled(False)
+        self._ensure_layout()
+        self.face_too_small.enabled = True
+
+    def show_no_face(self) -> None:
+        self.set_enabled(False)
+        self._ensure_layout()
+        self.no_face.enabled = True
+
+    def update(self, result: "EmotionResult") -> None:
+        """Update bars from EmotionResult."""
+        if not self.enabled:
+            return
+        self._ensure_layout()
+        for emo in EMOTIONS:
+            if emo not in self.bars:
+                continue
+            pct = result.percentages.get(emo, 0.0)
+            # Bar width scales 0..0.18
+            w = 0.001 + 0.179 * (pct / 100.0)
+            self.bars[emo].scale_x = w
+            # Position fill bar left-aligned
+            bg_pos = self.bar_bgs[emo].position
+            self.bars[emo].position = Vec3(bg_pos.x + w * 0.5, bg_pos.y, bg_pos.z)
+            if emo in self.values:
+                self.values[emo].text = f"{pct:.0f}%"
+            # Highlight top emotion
+            if emo == result.top_emotion:
+                if emo in self.labels:
+                    self.labels[emo].color = color.white
+                if emo in self.values:
+                    self.values[emo].color = color.white
+            else:
+                if emo in self.labels:
+                    self.labels[emo].color = EMOTION_COLORS[emo]
+                if emo in self.values:
+                    self.values[emo].color = color.light_gray
+
+
 class Hud:
     def __init__(self) -> None:
         # Ursina's default Text origin (-.5, .5) anchors the text at its
@@ -978,6 +1117,7 @@ class Hud:
         self.meter_fill = Entity(parent=camera.ui, model="quad", scale=(0.001, 0.012),
                                  color=color.green)
         self.meter_label = Text(text="legs", scale=0.9, color=color.light_gray)
+        self.emotion = EmotionHUD()
         self._aspect = None
 
     def layout(self) -> None:
@@ -992,6 +1132,8 @@ class Hud:
         self.meter_label.position = _ui_pos(-0.92, 0.70)
         self.meter_bg.position = _ui_pos(-0.78, 0.695)
         self.meter_fill.position = _ui_pos(-0.86, 0.695)
+        # EmotionHUD handles its own layout lazily
+        self.emotion._ensure_layout()
 
     def set_meter(self, value: float) -> None:
         value = _clamp(value, 0.0, 1.0)
@@ -1017,6 +1159,7 @@ hud: Hud | None = None
 avatar_offset = Vec3(0.0, HIP_HEIGHT, 0.0)
 shadow: Entity | None = None
 hand_avatar_tracker: HandAvatarTracker | None = None
+emotion_detector: "EmotionDetector | None" = None
 start_time = time.monotonic()
 _full_body_seen = False
 _preview_frame = None
@@ -1043,7 +1186,7 @@ def _place_preview_window() -> None:
 # Per-frame hook
 # ---------------------------------------------------------------------------
 def update() -> None:
-    global _full_body_seen, _preview_frame, avatar_offset, _preview_placed, hand_avatar_tracker
+    global _full_body_seen, _preview_frame, avatar_offset, _preview_placed, hand_avatar_tracker, emotion_detector
 
     if worker is None or avatar is None or hud is None:
         return
@@ -1101,6 +1244,27 @@ def update() -> None:
         shadow.enabled = bool(pts) and ready
         shadow.position = (avatar_offset.x, GROUND_Y + 0.02, avatar_offset.z)
 
+    # --- emotion detection -----------------------------------------------
+    # IMPORTANT: only touch the HUD when a NEW camera sample arrives.  Render
+    # frames with an empty queue must keep the last displayed state, otherwise
+    # the HUD flickered between "bars" and "no face" every other frame.
+    if cfg.detect_emotion and emotion_detector is not None:
+        if sample is not None:
+            if sample.face is not None and sample.face.is_detected:
+                # New camera sample with a detected face
+                result = emotion_detector.update(sample.face, dt)
+                if result is not None:
+                    # Valid detection with large enough face
+                    hud.emotion.set_enabled(True)
+                    hud.emotion.update(result)
+                else:
+                    # Detector returned None (face too small)
+                    hud.emotion.show_face_too_small()
+            else:
+                # New sample arrived but no face in it
+                hud.emotion.show_no_face()
+        # else: no new sample this frame -> keep last HUD state (no flicker)
+
     # --- HUD ----------------------------------------------------------------
     hud.layout()
     leg_q = tracker.leg_quality()
@@ -1132,11 +1296,24 @@ def update() -> None:
     # --- optional 2D preview ------------------------------------------------
     if cfg.show_video:
         if sample is not None and sample.frame is not None:
-            draw_pose_on_frame(sample.frame, sample.image, cfg.min_visibility)
+            # Hide Pose's 11 face landmarks while FaceMesh is actively
+            # showing the full face mesh; restore them otherwise.
+            face_detected = (
+                cfg.enable_face
+                and sample.face is not None
+                and sample.face.is_detected
+            )
+            draw_pose_on_frame(
+                sample.frame, sample.image, cfg.min_visibility,
+                show_pose_face=not face_detected,
+            )
             # Draw hands on preview
             if cfg.enable_hands:
                 for label, hand_lms in sample.hands.items():
                     draw_hand_on_frame(sample.frame, hand_lms)
+            # Draw the full 468-landmark face mesh when a face is detected
+            if face_detected:
+                draw_face_mesh_subset(sample.frame, sample.face, mode="full")
             _preview_frame = sample.frame
         if _preview_frame is not None:
             if not _preview_placed:
@@ -1162,11 +1339,24 @@ def input(key: str) -> None:  # noqa: A001
 # ---------------------------------------------------------------------------
 # 2D overlay
 # ---------------------------------------------------------------------------
-def draw_pose_on_frame(frame, image_points, min_visibility: float) -> None:
-    """Draw image-space landmarks/bones onto `frame` in place."""
+def draw_pose_on_frame(frame, image_points, min_visibility: float,
+                       show_pose_face: bool = True) -> None:
+    """Draw image-space landmarks/bones onto `frame` in place.
+
+    Args:
+        frame: Image to draw on (modified in place).
+        image_points: List of (x, y, visibility) per Pose landmark.
+        min_visibility: Draw a landmark only if visibility >= this value.
+        show_pose_face: If False, skip Pose's 11 face landmarks (indices
+            0-10: nose, eyes, ears, lips) so FaceMesh is the only face
+            visualization on screen.
+    """
     h, w = frame.shape[:2]
     pts: list[tuple[int, int] | None] = []
-    for x, y, v in image_points:
+    for idx, (x, y, v) in enumerate(image_points):
+        if not show_pose_face and idx in POSE_FACE_LANDMARKS:
+            pts.append(None)
+            continue
         if v >= min_visibility:
             pts.append((int(x * w), int(y * h)))
         else:
@@ -1211,6 +1401,10 @@ def parse_args() -> argparse.Namespace:
                    help="Also open a cv2 window with the camera feed + overlay.")
     p.add_argument("--enable-hands", action="store_true",
                    help="Enable hand and finger tracking.")
+    p.add_argument("--enable-face", action="store_true",
+                   help="Enable face mesh tracking (lightweight subset for performance).")
+    p.add_argument("--detect-emotion", action="store_true",
+                   help="Enable emotion detection from face mesh (requires --enable-face).")
     p.add_argument("--no-flip", action="store_true",
                    help="Do not mirror the frame (selfie view is on by default).")
     p.add_argument("--show-joints", action="store_true",
@@ -1251,7 +1445,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    global cfg, worker, tracker, avatar, hud, shadow, avatar_offset, hand_avatar_tracker
+    global cfg, worker, tracker, avatar, hud, shadow, avatar_offset, hand_avatar_tracker, face_avatar_tracker, emotion_detector
 
     args = parse_args()
     cfg = Config(
@@ -1262,6 +1456,8 @@ def main() -> None:
         min_visibility=args.min_visibility,
         show_video=args.show_video,
         enable_hands=args.enable_hands,
+        enable_face=args.enable_face,
+        detect_emotion=args.detect_emotion,
         flip=not args.no_flip,
         show_joints=args.show_joints,
         require_full_body=args.require_full_body,
@@ -1298,6 +1494,9 @@ def main() -> None:
         print(worker.error, file=sys.stderr)
         worker.stop()
         sys.exit(1)
+
+    # Initialize emotion detector if enabled
+    emotion_detector = EmotionDetector(smoothing_tau=1.0) if cfg.detect_emotion else None
 
     print("Pose avatar running.  q = quit, WASD = move.", flush=True)
     try:

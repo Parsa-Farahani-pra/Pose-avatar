@@ -2,7 +2,7 @@
 
 A Python project that drives a 3D humanoid avatar using webcam-based pose estimation with MediaPipe and visualizes it in real-time using the Ursina 3D engine.
 
-![python](https://img.shields.io/badge/python-3.8--3.13-blue)
+![python](https://img.shields.io/badge/python-3.8-3.13-blue)
 ![mediapipe](https://img.shields.io/badge/mediapipe-0.10.14-orange)
 ![ursina](https://img.shields.io/badge/ursina-7.x-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -16,7 +16,7 @@ A Python project that drives a 3D humanoid avatar using webcam-based pose estima
 - **Graphics**: Built-in graphics adapter with OpenGL 3.3+ support
 
 ### Recommended Requirements
-- **CPU**: 4+ cores for simultaneous processing of camera, pose estimation, and 3D rendering
+- **CPU**: 4+ cores for simultaneous processing of camera, pose/face/hand tracking, and 3D rendering
 - **Memory**: 8GB+ RAM
 - **Storage**: SSD recommended
 - **Graphics**: Dedicated GPU with WebGL 2.0+ support
@@ -32,7 +32,7 @@ A Python project that drives a 3D humanoid avatar using webcam-based pose estima
 |-----------|-----------------|---------|
 | **Python** | 3.8 - 3.13 | Core runtime (3.14 not supported by MediaPipe) |
 | **OpenCV** | 4.8.0+ / 5.x | Camera capture and image processing |
-| **MediaPipe** | 0.10.14 (exact) | Pose + hand landmark detection (`mp.solutions`) |
+| **MediaPipe** | 0.10.14 (exact) | Pose, hand, and face mesh landmark detection (`mp.solutions`) |
 | **Ursina** | 7.0.0 - 7.x | 3D rendering engine |
 | **NumPy** | 1.24.0+ | Numerical operations |
 
@@ -52,18 +52,27 @@ A Python project that drives a 3D humanoid avatar using webcam-based pose estima
 - **Hand & Finger Tracking** (`--enable-hands`): MediaPipe Hands drives an articulated hand rig —
   a palm capsule from wrist to middle-finger base plus 3 slender phalanx segments per finger
   (21 landmarks per hand), rendered only while the hand is actually visible
+- **Face Mesh Tracking** (`--enable-face`): Full 468-landmark MediaPipe Face Mesh overlay on the 2D preview,
+  with color-coded regions (jawline, eyes, eyebrows, lips, nose) and debug bounds display
+- **Emotion Detection** (`--detect-emotion`): Real-time classification of 5 core emotions
+  (Happy, Sad, Angry, Surprised, Neutral) from Face Mesh geometry with temporal smoothing
+  and probability bars in the 3D HUD
 - **Dual-Mode Operation**:
-  - `pose_avatar.py`: Full 3D avatar with articulated hands and optional camera preview window
-  - `pose_webcam.py`: Standalone 2D skeleton/hand overlay (no 3D graphics)
+  - `pose_avatar.py`: Full 3D avatar with articulated hands, optional face mesh, optional emotion HUD,
+    and optional camera preview window
+  - `pose_webcam.py`: Standalone 2D viewer with pose/hand/face overlay
+- **Smart Face Activation**: Face Mesh auto-activates when face ≥ 25% of frame height;
+  Pose's 11 face landmarks auto-hide when FaceMesh is active
 - **Smooth Animation**: Interpolated movement at 60 FPS rendering despite ~7.5 FPS camera input
 - **Interactive Controls**: WASD/Arrow keys to move the avatar, R/F to raise/lower
-- **Understanding HUD**: Visual feedback showing pose tracking status and body visibility
+- **Understanding HUD**: Visual feedback showing pose tracking status, body visibility,
+  and optional emotion probability bars
 
 ## 📋 System Requirements
 
 ### Hardware
 - **Webcam**: Any standard USB webcam (capable of 640x480 resolution minimum)
-- **Processor**: CPU-based pose estimation (optimized for multi-core CPUs)
+- **Processor**: CPU-based pose/face/hand estimation (optimized for multi-core CPUs)
 - **Graphics**: Basic 3D graphics support (Ursina requires OpenGL 3.3+)
 - **Memory**: 4GB+ RAM recommended
 
@@ -110,8 +119,8 @@ Runs the 3D avatar alongside a camera preview window:
 ```
 
 This opens TWO windows:
-- **"Pose Avatar"** - The Ursina 3D scene with avatar and HUD
-- **"pose"** - Live camera feed with 2D skeleton overlay
+- **"Pose Avatar"** — The Ursina 3D scene with avatar and HUD
+- **"pose"** — Live camera feed with 2D skeleton overlay
 
 ### Run 3D Avatar with Hand Tracking
 Adds articulated hands — a palm plus individually bending finger segments — to the 3D avatar:
@@ -123,6 +132,27 @@ Adds articulated hands — a palm plus individually bending finger segments — 
 Hands only appear while they are visible to the camera (landmark visibility ≥ 0.7), and each
 finger bends naturally with your real fingers. Left and right hands use identical geometry and
 are colour-coded (teal = left, pink = right).
+
+### Run 3D Avatar with Face Mesh
+Shows the full 468-landmark Face Mesh overlay on the 2D preview window:
+
+```bash
+./run.sh pose_avatar.py --enable-face --show-video
+```
+
+### Run 3D Avatar with Emotion Detection
+Shows real-time emotion classification (Happy, Sad, Angry, Surprised, Neutral) with probability
+bars in the 3D HUD (requires face tracking):
+
+```bash
+./run.sh pose_avatar.py --enable-face --detect-emotion --show-video
+```
+
+### Run 3D Avatar with All Features
+
+```bash
+./run.sh pose_avatar.py --enable-hands --enable-face --detect-emotion --show-video
+```
 
 ### Run 3D Avatar Only
 Displays only the 3D avatar without camera preview:
@@ -144,10 +174,10 @@ Displays only the 2D pose tracking overlay:
 ./run.sh pose_webcam.py
 ```
 
-Hand landmarks can be overlaid on the 2D skeleton too:
+Hand landmarks and face mesh can be overlaid on the 2D skeleton too:
 
 ```bash
-./run.sh pose_webcam.py --enable-hands
+./run.sh pose_webcam.py --enable-hands --enable-face
 ```
 
 **Important**: This must run INSTEAD of `pose_avatar.py` because the webcam can only be opened by one process at a time.
@@ -171,6 +201,8 @@ In the **"Pose Avatar"** window:
 |--------|---------|-------------|
 | `--show-video` | false | Opens camera preview window with skeleton overlay |
 | `--enable-hands` | false | Enable hand & finger tracking (palm capsule + articulated fingers on the avatar, 0.7 visibility threshold) |
+| `--enable-face` | false | Enable full 468-landmark MediaPipe Face Mesh tracking (auto-activates at ≥25% frame height; hides Pose's 11 face landmarks while active) |
+| `--detect-emotion` | false | Enable emotion detection from Face Mesh (requires `--enable-face`); shows 5-emotion probability bars in 3D HUD with temporal smoothing (~1s) |
 | `--show-joints` | false | Draw joint spheres at each pose landmark |
 | `--window-width` | 1280 | Width of the 3D window in pixels |
 | `--window-height` | 720 | Height of the 3D window in pixels |
@@ -198,6 +230,12 @@ In the **"Pose Avatar"** window:
    landmark visibility reaches 0.7, so a blurry or partially cropped hand simply stays hidden. The switch from
    pose to hand tracking is automatic per arm — no extra configuration needed.
 
+6. **Face Tracking & Emotion**: With `--enable-face`, the full 468-landmark Face Mesh is available. It automatically
+   engages when the detected face occupies ≥25% of frame height. With `--detect-emotion`, a real-time
+   5-emotion HUD appears at bottom-left (Happy/Sad/Angry/Surprised/Neutral probability bars).
+   The HUD shows "Face too small" when the face is below the size threshold and "No face detected"
+   when tracking is lost.
+
 ## 🧪 Development & Testing
 
 ### Verify Installation
@@ -220,26 +258,53 @@ Run with `--min-visibility` set to 0 to see all landmarks:
 ./run.sh pose_avatar.py --show-video --min-visibility 0
 ```
 
+### Running Tests
+
+Run the integration test for the full feature pipeline:
+```bash
+./run.sh tests/test_integration.py
+```
+
+Run individual hand tracking tests:
+```bash
+./run.sh tests/hand_analysis/test_hand_landmarks.py
+./run.sh tests/hand_analysis/test_hands_compatibility.py
+```
+
+Run emotion detection debug/test:
+```bash
+./run.sh tests/emotion_detection/test_emotion_debug.py
+```
+
 ## 📝 Project Structure
 
 ```
 .
-├── pose_avatar.py              # Main 3D avatar program (pose + articulated hands)
-├── pose_webcam.py              # Standalone 2D pose/hand tracker
+├── pose_avatar.py              # Main 3D avatar program (pose + hands + face + emotion)
+├── pose_webcam.py              # Standalone 2D pose/hand/face tracker
+├── face_tracker.py             # Modular MediaPipe Face Mesh tracking module
 ├── hand_tracker.py             # Modular MediaPipe Hands tracking module
-├── test_hand_landmarks.py      # Visualize 21 hand landmarks & finger connections
-├── test_hands_compatibility.py # Verify mp.solutions.hands availability
+├── emotion_detection.py        # Geometric emotion classifier from FaceMesh landmarks
 ├── run.sh                      # Execution helper script
 ├── requirements.txt            # Python dependency ranges
 ├── requirements-lock.txt       # Reproducible pinned versions
+├── tests/                      # Test suite (add `--Show-Video` flag when running)
+│   ├── test_integration.py                      # Full pipeline integration test
+│   ├── hand_analysis/                           # Hand tracking tests
+│   │   ├── test_hand_landmarks.py              # Visualize 21 hand landmarks & finger connections
+│   │   └── test_hands_compatibility.py         # Verify mp.solutions.hands availability
+│   └── emotion_detection/                       # Emotion detection tests
+│       └── test_emotion_debug.py               # Debug emotion detection logic
 ├── .gitignore                  # Git ignore rules
 ├── README.md                   # This file
 └── README.old                  # Original documentation
 ```
 
-`hand_tracker.py` is the single source of truth for hand landmark indices
-(`WRIST`, `THUMB_*`, `INDEX_*`, ...), finger chains and the shared
-`HandTracker`/`draw_hand_on_frame()` helpers used by both programs.
+`face_tracker.py` and `hand_tracker.py` are the single sources of truth for landmark indices
+and drawing helpers used by both programs. `emotion_detection.py` consumes FaceMesh landmarks
+and classifies 5 emotions via geometric features (EAR, MAR, mouth curve, brow slope, etc.) with softmax + EMA smoothing.
+
+## 🧪 Running Tests
 
 ## 🤝 Contributing
 
@@ -285,6 +350,14 @@ python3.12 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt
 - **Cause**: `--enable-hands` was not passed, or the hand is barely visible / too close to the camera
 - **Solution**: Enable the flag explicitly and step back so the whole hand is in frame (hands lock on at visibility ≥ 0.7). Hand tracking only engages when the corresponding arm is visible in the pose results.
 
+### Face mesh not appearing
+- **Cause**: Face is smaller than 25% of frame height, or `--enable-face` not passed
+- **Solution**: Move closer to camera (face ≥25% of frame height triggers auto-activation) and ensure flag is passed
+
+### Emotion HUD not appearing
+- **Cause**: Face not detected/face too small, or `--detect-emotion` requires `--enable-face`
+- **Solution**: Ensure both `--enable-face` and `--detect-emotion` are passed. HUD shows "Face too small" or "No face detected" when applicable.
+
 ## 📊 Performance Metrics
 
 - **Camera FPS**: ~7.5 FPS
@@ -303,6 +376,19 @@ Potential improvements for future versions:
 - [ ] Machine learning-based motion retargeting
 
 ## 📜 Changelog
+
+### v0.3.0 — Face Mesh + Emotion Detection
+- Added MediaPipe Face Mesh integration via new `face_tracker.py` module
+  (468 landmarks, color-coded face oval/eyes/brows/lips/nose, debug bounds)
+- New `--enable-face` flag for both `pose_avatar.py` and `pose_webcam.py`
+- Face mesh auto-activates at ≥25% frame height; Pose's 11 face landmarks
+  auto-hidden while FaceMesh active
+- Added `emotion_detection.py` — standalone geometric emotion classifier
+  computing 12 features (EAR, MAR, mouth curve, brow-eye distance, etc.)
+  with softmax + 1s EMA smoothing into 5 emotions (Happy/Sad/Angry/Surprised/Neutral)
+- New `--detect-emotion` flag for `pose_avatar.py` — shows real-time probability
+  bars in bottom-left 3D HUD with confidence threshold (60%)
+- Removed deprecated `FaceAvatarTracker` and `MinimalFaceAnchor` yellow sphere
 
 ### v0.2.0 — Hand & Finger Tracking
 - Added MediaPipe Hands integration via the new `hand_tracker.py` module
