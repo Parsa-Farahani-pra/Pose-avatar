@@ -2,7 +2,7 @@
 
 A Python project that drives a 3D humanoid avatar using webcam-based pose estimation with MediaPipe and visualizes it in real-time using the Ursina 3D engine.
 
-![python](https://img.shields.io/badge/python-3.8-3.13-blue)
+![python](https://img.shields.io/badge/python-3.8+-blue)
 ![mediapipe](https://img.shields.io/badge/mediapipe-0.10.14-orange)
 ![ursina](https://img.shields.io/badge/ursina-7.x-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -102,7 +102,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 
 # Install pinned, reproducible dependencies
-pip install -r requirements-lock.txt
+pip install -r requirements/requirements-lock.txt
 ```
 
 **Note**: MediaPipe is pinned to exactly `0.10.14` — this is the last version that
@@ -115,7 +115,7 @@ Ursina 7.x provides the 3D rendering engine.
 Runs the 3D avatar alongside a camera preview window:
 
 ```bash
-./run.sh pose_avatar.py --show-video
+./scripts/run.sh pose_avatar.py --show-video
 ```
 
 This opens TWO windows:
@@ -126,7 +126,7 @@ This opens TWO windows:
 Adds articulated hands — a palm plus individually bending finger segments — to the 3D avatar:
 
 ```bash
-./run.sh pose_avatar.py --enable-hands --show-video
+./scripts/run.sh pose_avatar.py --enable-hands --show-video
 ```
 
 Hands only appear while they are visible to the camera (landmark visibility ≥ 0.7), and each
@@ -137,7 +137,7 @@ are colour-coded (teal = left, pink = right).
 Shows the full 468-landmark Face Mesh overlay on the 2D preview window:
 
 ```bash
-./run.sh pose_avatar.py --enable-face --show-video
+./scripts/run.sh pose_avatar.py --enable-face --show-video
 ```
 
 ### Run 3D Avatar with Emotion Detection
@@ -145,39 +145,39 @@ Shows real-time emotion classification (Happy, Sad, Angry, Surprised, Neutral) w
 bars in the 3D HUD (requires face tracking):
 
 ```bash
-./run.sh pose_avatar.py --enable-face --detect-emotion --show-video
+./scripts/run.sh pose_avatar.py --enable-face --detect-emotion --show-video
 ```
 
 ### Run 3D Avatar with All Features
 
 ```bash
-./run.sh pose_avatar.py --enable-hands --enable-face --detect-emotion --show-video
+./scripts/run.sh pose_avatar.py --enable-hands --enable-face --detect-emotion --show-video
 ```
 
 ### Run 3D Avatar Only
 Displays only the 3D avatar without camera preview:
 
 ```bash
-./run.sh pose_avatar.py
+./scripts/run.sh pose_avatar.py
 ```
 
 Hand tracking can also be toggled here:
 
 ```bash
-./run.sh pose_avatar.py --enable-hands
+./scripts/run.sh pose_avatar.py --enable-hands
 ```
 
 ### Run Standalone 2D Skeleton
 Displays only the 2D pose tracking overlay:
 
 ```bash
-./run.sh pose_webcam.py
+./scripts/run.sh pose_webcam.py
 ```
 
 Hand landmarks and face mesh can be overlaid on the 2D skeleton too:
 
 ```bash
-./run.sh pose_webcam.py --enable-hands --enable-face
+./scripts/run.sh pose_webcam.py --enable-hands --enable-face
 ```
 
 **Important**: This must run INSTEAD of `pose_avatar.py` because the webcam can only be opened by one process at a time.
@@ -255,56 +255,61 @@ python -m compileall -q .
 
 Run with `--min-visibility` set to 0 to see all landmarks:
 ```bash
-./run.sh pose_avatar.py --show-video --min-visibility 0
+# Use scripts/run.sh which includes src/ path automatically
+./scripts/run.sh pose_avatar.py --show-video --min-visibility 0
 ```
 
 ### Running Tests
 
 Run the integration test for the full feature pipeline:
 ```bash
-./run.sh tests/test_integration.py
+./scripts/run.sh tests/test_integration.py
 ```
 
 Run individual hand tracking tests:
 ```bash
-./run.sh tests/hand_analysis/test_hand_landmarks.py
-./run.sh tests/hand_analysis/test_hands_compatibility.py
+./scripts/run.sh tests/hand_analysis/test_hand_landmarks.py
+./scripts/run.sh tests/hand_analysis/test_hands_compatibility.py
 ```
 
 Run emotion detection debug/test:
 ```bash
-./run.sh tests/emotion_detection/test_emotion_debug.py
+./scripts/run.sh tests/emotion_detection/test_emotion_debug.py
 ```
 
 ## 📝 Project Structure
 
 ```
 .
-├── pose_avatar.py              # Main 3D avatar program (pose + hands + face + emotion)
-├── pose_webcam.py              # Standalone 2D pose/hand/face tracker
-├── face_tracker.py             # Modular MediaPipe Face Mesh tracking module
-├── hand_tracker.py             # Modular MediaPipe Hands tracking module
-├── emotion_detection.py        # Geometric emotion classifier from FaceMesh landmarks
-├── run.sh                      # Execution helper script
-├── requirements.txt            # Python dependency ranges
-├── requirements-lock.txt       # Reproducible pinned versions
-├── tests/                      # Test suite (add `--Show-Video` flag when running)
+├── README.md                   # This file
+├── .gitignore                  # Git ignore rules
+├── requirements/               # 📦 Dependency files
+│   ├── requirements.txt
+│   └── requirements-lock.txt
+├── src/                        # 🐍 Python source code
+│   ├── pose_avatar.py          # Main 3D avatar program (pose + hands + face + emotion)
+│   ├── pose_webcam.py          # Standalone 2D pose/hand/face tracker
+│   ├── face_tracker.py         # MediaPipe Face Mesh tracking module
+│   ├── hand_tracker.py         # MediaPipe Hands tracking module
+│   └── emotion_detection.py    # 5-emotion classifier from FaceMesh landmarks
+├── tests/                      # ✅ Test suite (push to main)
 │   ├── test_integration.py                      # Full pipeline integration test
 │   ├── hand_analysis/                           # Hand tracking tests
 │   │   ├── test_hand_landmarks.py              # Visualize 21 hand landmarks & finger connections
 │   │   └── test_hands_compatibility.py         # Verify mp.solutions.hands availability
 │   └── emotion_detection/                       # Emotion detection tests
 │       └── test_emotion_debug.py               # Debug emotion detection logic
-├── .gitignore                  # Git ignore rules
-├── README.md                   # This file
+├── scripts/                    # 🚀 Shell scripts
+│   └── run.sh                  # Execution helper (auto-resolves src/ paths)
+├── LICENSE (optional)
 └── README.old                  # Original documentation
 ```
 
-`face_tracker.py` and `hand_tracker.py` are the single sources of truth for landmark indices
-and drawing helpers used by both programs. `emotion_detection.py` consumes FaceMesh landmarks
+`src/face_tracker.py` and `src/hand_tracker.py` are the single sources of truth for landmark indices
+and drawing helpers used by both programs. `src/emotion_detection.py` consumes FaceMesh landmarks
 and classifies 5 emotions via geometric features (EAR, MAR, mouth curve, brow slope, etc.) with softmax + EMA smoothing.
 
-## 🧪 Running Tests
+## 🤝 Contributing
 
 ## 🤝 Contributing
 
@@ -330,14 +335,14 @@ This project is for educational and personal use. Please respect the licenses of
 - **Solution**: Ensure you've activated the virtual environment and installed dependencies:
 ```bash
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements-lock.txt
+pip install -r requirements/requirements-lock.txt
 ```
 
 ### `AttributeError: module 'mediapipe' has no attribute 'solutions'`
 - **Cause**: You are using Python 3.14, or an incompatible mediapipe version. MediaPipe's `mp.solutions.pose` API is only available in version 0.10.14 and was removed in later 0.10.x patches (0.10.20+) and all 1.x versions.
 - **Solution**: Recreate the venv with Python 3.8–3.13 and install the locked dependencies:
 ```bash
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements/requirements-lock.txt
 ```
 
 ### Avatar appears oversized/undersized

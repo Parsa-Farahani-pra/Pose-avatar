@@ -70,3 +70,9 @@ mediapipe/
 *.bak
 *.temp
 *.cache
+
+# Debug/historical notes (kept locally, not pushed)
+CHANGES_SUMMARY.md
+EMOTION_HUD_FIX.md
+FICKERING_FIX.md
+debug_emotion.py
