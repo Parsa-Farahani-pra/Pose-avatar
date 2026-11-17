@@ -181,6 +181,9 @@ def extract_features(landmarks_468: List[Tuple[int, Tuple[float, float, float]]]
     # Mouth
     feats["mar"] = _mouth_aspect_ratio(landmarks_468)
     feats["mouth_curve"] = _mouth_corner_curvature(landmarks_468)
+    # Reduced penalty for mouth_curve (natural breathing causes minor movement)
+    if abs(feats["mouth_curve"]) < 0.03:  # Only penalize meaningful frown/smile
+        feats["mouth_curve"] *= 0.3  # Reduce penalty severity
     feats["mouth_width_ratio"] = _mouth_width_ratio(landmarks_468)
 
     # Eyebrows
@@ -264,15 +267,18 @@ def _score_surprised(feats):
 
 
 def _score_neutral(feats):
-    # Baseline: penalize deviation from rest on all features
+    """Neutral: aligned with REST state. Lower score = more expressive."""
     s = 0.0
-    s -= abs(feats["ear_avg"] - REST["ear_avg"]) * 15
-    s -= abs(feats["mar"] - REST["mar"]) * 15
-    s -= abs(feats["mouth_curve"]) * 15
-    s -= abs(feats["brow_eye_dist_avg"] - REST["brow_eye_dist_avg"]) * 15
-    s -= abs(feats["brow_slope_avg"]) * 15
-    s -= abs(feats["cheek_raise"] - REST["cheek_raise"]) * 10
-    s -= abs(feats["mouth_width_ratio"] - REST["mouth_width_ratio"]) * 10
+    # Light penalties for all deviations
+    s -= abs(feats["ear_avg"] - REST["ear_avg"]) * 20
+    s -= abs(feats["mar"] - REST["mar"]) * 20
+    # Minor penalty for mouth curve - don't penalize breathing
+    s -= abs(feats["mouth_curve"]) * 10
+    s -= abs(feats["brow_eye_dist_avg"] - REST["brow_eye_dist_avg"]) * 20
+    s -= abs(feats["brow_slope_avg"]) * 20
+    s -= abs(feats["cheek_raise"] - REST["cheek_raise"]) * 15
+    s -= abs(feats["mouth_width_ratio"] - REST["mouth_width_ratio"]) * 12
+    
     return s
 
 

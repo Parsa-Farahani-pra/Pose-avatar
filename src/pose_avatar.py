@@ -994,7 +994,7 @@ def _ui_pos(nx: float, ny: float) -> Vec3:
 EMOTIONS = ["Happy", "Sad", "Angry", "Surprised", "Neutral"]
 EMOTION_COLORS = {
     "Happy": color.rgb32(80, 200, 120),
-    "Sad": color.rgb32(100, 150, 255),
+    "Sad": color.rgb32(80, 150, 255),
     "Angry": color.rgb32(255, 80, 80),
     "Surprised": color.rgb32(255, 200, 60),
     "Neutral": color.rgb32(180, 180, 180),
@@ -1013,46 +1013,40 @@ class EmotionHUD:
         self.values: dict[str, Text] = {}
         self.face_too_small = Text(text="Face too small (<25% frame)", scale=1.0, color=color.orange, enabled=False)
         self.no_face = Text(text="No face detected", scale=1.0, color=color.gray, enabled=False)
-        self._aspect = None
-        self._layout_done = False
+        self._entities_created = False
 
     def _ensure_layout(self) -> None:
-        if self._layout_done:
-            return
-        self._layout_done = True
-        aspect = window.aspect_ratio
-        # Position at bottom-left, above the stats/hint area
-        base_y = -0.30  # starts at -0.30 and goes up
+        # Create all entities once
+        if not self._entities_created:
+            for i, emo in enumerate(EMOTIONS):
+                # Label
+                self.labels[emo] = Text(text=emo[:3].upper(), scale=0.75,
+                                        color=EMOTION_COLORS[emo], enabled=False)
+                # Fill bar
+                self.bars[emo] = Entity(parent=camera.ui, model="quad",
+                                      scale=(0.001, 0.025),
+                                      color=EMOTION_COLORS[emo], enabled=False)
+                # Percentage value
+                self.values[emo] = Text(text="0%", scale=0.7, color=color.light_gray, enabled=False)
+            self._entities_created = True
+
+        # Always update positions to account for new aspect ratio
+        base_y = 0.20
         self.title.position = _ui_pos(-0.92, base_y)
-        self.face_too_small.position = _ui_pos(-0.92, base_y - 0.06)
-        self.no_face.position = _ui_pos(-0.92, base_y - 0.06)
+        self.face_too_small.position = _ui_pos(-0.92, base_y - 0.10)
+        self.no_face.position = _ui_pos(-0.92, base_y - 0.10)
         for i, emo in enumerate(EMOTIONS):
-            y = base_y - 0.06 - i * 0.07  # -0.36, -0.43, -0.50, -0.57, -0.64
-            # Label
-            self.labels[emo] = Text(text=emo[:3].upper(), scale=0.75,
-                                    color=EMOTION_COLORS[emo], enabled=False)
-            self.labels[emo].position = _ui_pos(-0.92, y)
-            # Background bar
-            self.bar_bgs[emo] = Entity(parent=camera.ui, model="quad",
-                                        scale=(0.18, 0.035),
-                                        color=color.rgb32(40, 44, 58), enabled=False)
-            self.bar_bgs[emo].position = _ui_pos(-0.83, y - 0.005)
-            # Fill bar
-            self.bars[emo] = Entity(parent=camera.ui, model="quad",
-                                          scale=(0.001, 0.03),
-                                          color=EMOTION_COLORS[emo], enabled=False)
-            self.bars[emo].position = _ui_pos(-0.83, y - 0.005)
-            # Percentage value
-            self.values[emo] = Text(text="0%", scale=0.7, color=color.light_gray, enabled=False)
-            self.values[emo].position = _ui_pos(-0.62, y)
+            y = base_y - 0.08 - i * 0.07
+            self.labels[emo].position = _ui_pos(-0.92, y + 0.02)
+            self.bars[emo].position = _ui_pos(-0.83, y)
+            self.values[emo].position = _ui_pos(-0.65, y)
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
         self.title.enabled = enabled
         self.face_too_small.enabled = False
         self.no_face.enabled = False
-        # Ensure layout is initialized first (lazy load)
-        self._ensure_layout()
+        # NOTE: Don't call _ensure_layout() here - only create entities once during first enable
         for emo in EMOTIONS:
             if emo in self.labels:
                 self.labels[emo].enabled = enabled
@@ -1065,19 +1059,18 @@ class EmotionHUD:
 
     def show_face_too_small(self) -> None:
         self.set_enabled(False)
-        self._ensure_layout()
+        # Don't recreate layout on disable
         self.face_too_small.enabled = True
 
     def show_no_face(self) -> None:
         self.set_enabled(False)
-        self._ensure_layout()
+        # Don't recreate layout on disable
         self.no_face.enabled = True
 
     def update(self, result: "EmotionResult") -> None:
         """Update bars from EmotionResult."""
         if not self.enabled:
             return
-        self._ensure_layout()
         for emo in EMOTIONS:
             if emo not in self.bars:
                 continue
@@ -1085,9 +1078,10 @@ class EmotionHUD:
             # Bar width scales 0..0.18
             w = 0.001 + 0.179 * (pct / 100.0)
             self.bars[emo].scale_x = w
-            # Position fill bar left-aligned
-            bg_pos = self.bar_bgs[emo].position
-            self.bars[emo].position = Vec3(bg_pos.x + w * 0.5, bg_pos.y, bg_pos.z)
+            # Position fill bar at fixed left-aligned x = -0.83 (no background bar)
+            # We must use _ui_pos to account for the window aspect ratio.
+            bar_y = self.bars[emo].position.y
+            self.bars[emo].position = _ui_pos(-0.83 + w * 0.5, bar_y / 0.5)
             if emo in self.values:
                 self.values[emo].text = f"{pct:.0f}%"
             # Highlight top emotion
